@@ -12,367 +12,220 @@
  |_____/|______|_____\ / ____||______|_|  \_\
                       /
   	
-	BETTER SLICER 1.0 for Aseprite
+	BETTER SLICER for Aseprite
 
-	-------------Author-------------------------
-    by NgnDang (Ngn Hai Dang)
-
-	Follow me on:
-    Twitter: http://twitter.com/ngndangg
-	Itch page: https://ngndang.itch.io/
-	Donation(Ko-fi): https://ko-fi.com/ngndang
-	to get notified about updates on my projects
-	
-	-------------About---------------------------
-	A handy script for slicing Aseprite sprites
-	Main features:
-	+ Creating Slices Automatically (Currently under further development)
-	+ Creating a Grid of slices by Grid size
-	+ Creating a Grid of slices by Columns and Rows count
-
-	This interface is similar to that of Unity's Sprite Editor
-	I hope you enjoy using this script as much as I do. It is really useful for working with big spritesheets
-	and just big projects overall.
+	-------------Credits-------------------------
+	Original Script by NgnHaiDang
+	Updated & Optimized by Pix3lPirat3
+	---------------------------------------------
+	A handy utility for automatically or manually 
+	slicing spritesheets with grids, cell counts, 
+	and contiguous transparency bounds.
 
 --]]
 
-------------------------Preparation-----------------------------------
-local mode_auto = "Automatic (Experimental)"
-local mode_bySize = "Grid by Cell Size"
-local mode_byCount = "Grid by Cell Count"
+local M_AUTO, M_SIZE, M_COUNT = "Automatic", "Grid by Cell Size", "Grid by Cell Count"
 
-sprite = app.activeSprite
-selection = sprite.selection
-
-if not sprite then app.alert("Error: You must be working on a Sprite to use this Script.") return end
-
-if app.activeImage:isEmpty() then app.alert("Error: Sprite is blank") return end
-
-
--------------------------Dialog------------------------------
-local main_dialog = Dialog("Better Slicer")
-main_dialog
-	:combobox{  
-		id = "mode",
-		label = "Mode",
-		option = mode_bySize,
-		options = {mode_auto, mode_bySize, mode_byCount },
-		onchange = function() updateDialog() end
-	}
-
-	:entry{ id = "name", label = "Name", text = "Slice"}
-	:color{ id = "color", label = "Color", color = Color{ r = 0, g = 0, b = 250, a = 150 }}
-	:check{ id = "clear", text = "Clear slices on canvas", selected = true }
-
-	:separator{ id = "size_header", text = "Slice Size"}
-	:number{ id = "cell_W", label = "W:", text = "8", decimals = integer }
-	:number{ id = "cell_H", label = "H:", text = "8", decimals = integer }
-
-	:number{ id = "no_Col", label = "Col:", text="1", decimals = integer }
-	:number{ id = "no_Row", label = "Row:", text="1", decimals = integer }
-
-	:separator{ id = "padding_header", label="Padding", text="Padding" }
-	:number{ id = "padding_X", label = "X:", text = "0" }
-	:number{ id = "padding_Y", label="Y:", text = "0" }
-
-	:separator{ id = "offset_header", label="Offset", text="Offset" }
-	:number{ id = "offset_X", label = "X:", text="0" }
-	:number{ id = "offset_Y", label = "Y:", text="0" }
-
-	:separator{}
-	:button{ id = "slice", text = "Slice", focus = true, onclick = function() 
-		doSlice() 
-	end }
-	:separator{}
-	:button{ text = "Close", onclick= function() 
-		main_dialog:close()
-		return
-	end }
-
-
-local function showPaddingNOffsetField(_dlg, bool)
-	_dlg
-		:modify{ id = "padding_X", visible = bool, enabled = bool}
-		:modify{ id = "padding_Y", visible = bool, enabled = bool}
-		:modify{ id = "offset_X", visible = bool, enabled = bool}
-		:modify{ id = "offset_Y", visible = bool, enabled = bool}
+local spr = app.activeSprite
+if not spr or app.activeImage:isEmpty() then 
+    return app.alert("Error: Active sprite is invalid or blank.") 
 end
-local function showCellSizeField(_dlg, bool)
-	_dlg
-		:modify{ id = "cell_W", visible = bool, enabled = bool}
-		:modify{ id = "cell_H", visible = bool, enabled = bool}
-end
-local function showCellCountField(_dlg, bool)
-	_dlg
-		:modify{ id = "no_Col", visible = bool, enabled = bool}
-		:modify{ id = "no_Row", visible = bool, enabled = bool}
-end
-local function showAllLabel(_dlg, bool)
-	_dlg
-		:modify{ id = "size_header", visible = bool, enabled = bool}
-		:modify{ id = "padding_header", visible = bool, enabled = bool}
-		:modify{ id = "offset_header", visible = bool, enabled = bool}
-		:modify{ id = "clear", selected = true, enabled = bool}
+
+local function warn(msg) app.alert(msg) end
+
+local function notify(msg)
+    local d = Dialog("Slicer")
+    d:label{ text = msg }
+    d:button{ text = "OK", focus = true, onclick = function() d:close() end }
+    d:show{ wait = false }
 end
 
 
-function updateDialog() --Hide/Unhide elements based on mode
-	showAllLabel(main_dialog, false)
-	showCellSizeField(main_dialog, false)
-	showCellCountField(main_dialog, false)
-	showPaddingNOffsetField(main_dialog, false)
-	if main_dialog.data.mode == mode_auto then
-		showAllLabel(main_dialog, false)
-		showCellCountField(main_dialog, false)
-		showCellSizeField(main_dialog, false)
-		showPaddingNOffsetField(main_dialog, false)
-	end
-	if main_dialog.data.mode == mode_bySize then
-		main_dialog
-			:modify{ id = "size_header", text = "Slice Size"}
-		showAllLabel(main_dialog, true)
-		showCellSizeField(main_dialog, true)
-		showPaddingNOffsetField(main_dialog, true)
-	end
-	if main_dialog.data.mode == mode_byCount then
-		main_dialog
-			:modify{ id = "size_header", text = "Slice Count"}
-		showAllLabel(main_dialog, true)
-		showCellCountField(main_dialog, true)
-		showPaddingNOffsetField(main_dialog, true)
-	end
-	
-end
-updateDialog()
-
-------------------------Helper Functions------------------------------
-function clearSlices()
-	while #sprite.slices > 0 do 
-		for i, slice in ipairs(sprite.slices) do
-			sprite:deleteSlice(slice)
-		end
-	end
+local function clearSlices()
+    local q = {}
+    for _, s in ipairs(spr.slices) do q[#q+1] = s end
+    for _, s in ipairs(q) do spr:deleteSlice(s) end
 end
 
-------------------------by Size, by Number mode Functions------------------------------
-
-function doSlice() --Start
-	if main_dialog.data.mode == mode_bySize then
-		sliceBySize()
-	end
-	if main_dialog.data.mode == mode_byCount then
-		sliceByCount()
-	end
-	if main_dialog.data.mode == mode_auto then
-		local alert_dialog = Dialog("Alert")
-		alert_dialog
-			:label{text = "Experimental Script!"}:newrow{}
-			:label{text = "This script will clear all current slices"}:newrow{}
-			:label{text = "Do you want to continue?"}:newrow{}
-			:button{ text = "Yes", focus = true, onclick= function() 
-				doAutoSlice()
-				alert_dialog:close()
-			end }
-			:button{ text = "Cancel", onclick= function() 
-				alert_dialog:close()
-				return
-			end }
-			:show{wait = true}
-	end
-	app.refresh()
-end
-
-local bounds_W
-local bounds_H
-
-function GetBounds()
-	selection = sprite.selection
-	if selection.isEmpty then return app.alert("Please select an area to create slices") end
-	bounds_W = selection.bounds.width
-	bounds_H = selection.bounds.height
-end
-
-function sliceBySize()
-	if main_dialog.data.clear then clearSlices() end
-	data = main_dialog.data
-
-	GetBounds()
-	if selection.isEmpty then return end
-
-	cell_W = data.cell_W
-	cell_H = data.cell_H
-	no_Col = bounds_W // cell_W
-	no_Row = bounds_H // cell_H
-
-	createSliceGrid(data, selection, cell_W, cell_H, no_Col, no_Row)
-end
-
-function sliceByCount()
-	if main_dialog.data.clear then clearSlices() end
-	data = main_dialog.data
-
-	GetBounds()
-	if selection.isEmpty then return end
-
-	cell_W = math.floor( bounds_W / data.no_Col )
-	cell_H = math.floor( bounds_H / data.no_Row )
-
-	createSliceGrid(data, selection, cell_W, cell_H, data.no_Col, data.no_Row)
-end
-
---Create a Grid of slices based on the cells' size and the number of Collumns, Rows
-function createSliceGrid(data, selection, cellW, cellH, noCol, noRow)
-	app.transaction( function()  
-		i = 0
-		for col = 0, noCol - 1 do
-			for row = 0, noRow - 1 do
-
-				X = col * cellW + col * data.padding_X + data.offset_X + selection.origin.x
-				Y = row * cellH + row * data.padding_Y + data.offset_Y + selection.origin.y
-			
-				slice = sprite:newSlice(Rectangle(X, Y, cellW, cellH))
-			
-				slice.color =  data.color
-				slice.name = data.name .. "_" .. i
-
-				i = i + 1
-			end
-		end
-	end)
-end
-
-------------------------Auto mode Variables------------------------------
-
-function getActiveCel(layer, frame)
-    -- Loop through cels
-    for i,cel in ipairs(layer.cels) do
-  
-      -- Find the cel in the given frame
-      if cel.frame == frame then
-        return cel
-      end
-    end
-end
-
-function getCel()
-	cel = getActiveCel(app.activeLayer, app.activeFrame)
-
-	celW = cel.bounds.width
-	celH = cel.bounds.height
-	celX = cel.bounds.x
-	celY = cel.bounds.y
-end
-
-------------------------Auto mode Helper Functions------------------------------
-
-function isNotTransparent(pixel) --Check if pixel has alpha ~= 0
-    local rgbaAlpha = app.pixelColor.rgbaA(pixel)
-    local grayAlpha = app.pixelColor.grayaA(pixel)
-  
-    return rgbaAlpha ~= 0 or grayAlpha ~= 0
-end
-
-function inAnySlice(x, y) --Check if pixel is inside any slices
-    for i, sli in ipairs(sprite.slices) do
-        if sli.bounds:contains(Rectangle(x, y, 1, 1)) then 
-            return true
+local function createGrid(d, sel, cw, ch, cols, rows)
+    local id = 0
+    local cel, img, colorMode, tColor
+    if d.ignoreEmpty then
+        cel = app.activeLayer:cel(app.activeFrame)
+        if cel then
+            img, colorMode = cel.image, cel.image.colorMode
+            tColor = spr.transparentColor
         end
     end
-    return false
-end 
 
-local id = 0
-local function createSlice(x, y, w, h)
-    local slice = sprite:newSlice(x, y, w, h)
-    slice.color = main_dialog.data.color
-    id = id + 1
-	slice.name = main_dialog.data.name .. "_" .. id
-    app.refresh()
-    return slice
-end 
+    local function isCellEmpty(x, y, w, h)
+        if not cel then return true end
+        for cy = y, y + h - 1 do
+            for cx = x, x + w - 1 do
+                local ix, iy = cx - cel.bounds.x, cy - cel.bounds.y
+                if ix >= 0 and ix < cel.bounds.width and iy >= 0 and iy < cel.bounds.height then
+                    local p = img:getPixel(ix, iy)
+                    local trans = false
+                    if colorMode == ColorMode.RGB then trans = (app.pixelColor.rgbaA(p) == 0)
+                    elseif colorMode == ColorMode.GRAY then trans = (app.pixelColor.grayaA(p) == 0)
+                    else trans = (p == tColor) end
+                    if not trans then return false end
+                end
+            end
+        end
+        return true
+    end
 
---------------------------Flood Fill-------------------------------
-local img 
-
-local newColor = app.pixelColor.rgba(254, 1, 254, 255)
-
-local Xmax = 0
-local Xmin = 0
-local Ymax = 0
-local Ymin = 0
-
-function isColorEqual(a, b)
-    local pc = app.pixelColor
-    return pc.rgbaR(a) == pc.rgbaR(b) and
-            pc.rgbaG(a) == pc.rgbaG(b) and
-            pc.rgbaB(a) == pc.rgbaB(b) and
-            pc.rgbaA(a) == pc.rgbaA(b)
-end
-function isColorEqualAt(x, y, color)
-    local p = img:getPixel(x, y)
-    return isColorEqual(p, color)
-end
-function isTransparentAt(x, y) 
-    local p = img:getPixel(x, y)
-    return not isNotTransparent(p)
-end
-
-function isBadPixel(x, y)
-	return isTransparentAt(x, y) or isColorEqualAt(x, y, newColor) or x < 0 or x >= celW or y < 0 or y >= celH
-end
-
-function floodFill(x, y, targetColor) 
-
-    if isBadPixel(x, y) then return end
-
-	--Get the max, min value of x, y when flood fill to determind the boudaries
-
-    Xmax = math.max(Xmax, x)
-    Xmin = math.min(Xmin, x)
-    Ymax = math.max(Ymax, y)
-    Ymin = math.min(Ymin, y)
-
-    img:drawPixel(x, y, newColor)
-	--8 ways DFS flood fill
-    floodFill(x+1, y, targetColor)
-    floodFill(x-1, y, targetColor)
-    floodFill(x, y+1, targetColor)
-    floodFill(x, y-1, targetColor)
-    floodFill(x+1, y+1, targetColor)
-    floodFill(x+1, y-1, targetColor)
-    floodFill(x-1, y+1, targetColor)
-    floodFill(x-1, y-1, targetColor)
-end
-
-function doAutoSlice()
-    app.transaction( function()  
-		clearSlices() 
-		getCel()
-		img = cel.image:clone()
-        for Y = 0, celH - 1, 1 do --Rows
-            local newSlice = nil
-
-            for X = 0, celW - 1, 1 do --Cols
-                local trueX =  X + celX
-                local trueY = Y + celY
+    app.transaction(function()
+        if d.clear then clearSlices() end
+        local ox, oy = sel.origin.x, sel.origin.y
+        for r = 0, rows - 1 do
+            for c = 0, cols - 1 do
+                local x = c * cw + c * d.padding_X + d.offset_X + ox
+                local y = r * ch + r * d.padding_Y + d.offset_Y + oy
                 
-                local p = cel.image:getPixel(X, Y)
-
-                if isNotTransparent(p) and not inAnySlice(trueX, trueY) then
-                    if not isNotTransparent(left) or X == 0 then 		
-                        newSlice = createSlice(trueX, trueY, 1, 1)		--Create a new slice
-                        Xmax = 0; Xmin = X; Ymax = 0; Ymin = Y 			--Reset XY info
-                        floodFill(X, Y, p) 								--To get XY info (boundaries info)
-                        newSlice.bounds = Rectangle(Xmin + celX, Ymin + celY, Xmax - Xmin + 1, Ymax - Ymin + 1) --Apply XY info (boundaries info) to slice
-                        --print("Xmax: " .. Xmax + celX .. ", Xmin: " .. Xmin + celX .. ", Ymax: " .. Ymax + celY .. ", Ymin: " .. Ymin + celY)
-                    end
+                if not (d.ignoreEmpty and isCellEmpty(x, y, cw, ch)) then
+                    local s = spr:newSlice(Rectangle(x, y, cw, ch))
+                    s.color, s.name, id = d.color, d.name .. "_" .. id, id + 1
                 end
             end
         end
     end)
-	main_dialog:close()
+    notify(string.format("Created %d slices", id))
 end
----------------------------------------------------------
 
-main_dialog:show{wait=false}
+local function doGridSlice(d, isFixedCount)
+    local sel = spr.selection
+    if sel.isEmpty then return warn("Select a region to slice.") end
 
+    local bw, bh = sel.bounds.width, sel.bounds.height
+    local cw, ch, cols, rows = 0, 0, 0, 0
+
+    if isFixedCount then
+        cols, rows = d.no_Col, d.no_Row
+        if cols <= 0 or rows <= 0 then return end
+        cw, ch = bw // cols, bh // rows
+    else
+        cw, ch = d.cell_W, d.cell_H
+        if cw <= 0 or ch <= 0 then return end
+        cols, rows = bw // cw, bh // ch
+    end
+
+    if cw <= 0 or ch <= 0 or cols <= 0 or rows <= 0 then
+        return warn("Parameters resulted in invalid slice dimensions.")
+    end
+
+    createGrid(d, sel, cw, ch, cols, rows)
+end
+
+local function doAutoSlice(d)
+    local cel = app.activeLayer:cel(app.activeFrame)
+    if not cel then return warn("Active layer is empty on this frame.") end
+    
+    local img, colorMode = cel.image:clone(), cel.image.colorMode
+    local w, h, ox, oy = cel.bounds.width, cel.bounds.height, cel.bounds.x, cel.bounds.y
+    local tColor = spr.transparentColor
+
+    local function isTrans(x, y)
+        if x < 0 or x >= w or y < 0 or y >= h then return true end
+        local p = img:getPixel(x, y)
+        if colorMode == ColorMode.RGB then return app.pixelColor.rgbaA(p) == 0
+        elseif colorMode == ColorMode.GRAY then return app.pixelColor.grayaA(p) == 0
+        else return p == tColor end
+    end
+
+    local count = 0
+    app.transaction(function()
+        if d.clear then clearSlices() end
+        local vis = {}
+
+        for y = 0, h - 1 do
+            for x = 0, w - 1 do
+                local i = y * w + x
+                if not vis[i] and not isTrans(x, y) then
+                    local x1, x2, y1, y2 = x, x, y, y
+                    local q, head = {{x, y}}, 1
+                    vis[i] = true
+                    
+                    while head <= #q do
+                        local cx, cy = q[head][1], q[head][2]
+                        head = head + 1
+                        
+                        if cx < x1 then x1 = cx elseif cx > x2 then x2 = cx end
+                        if cy < y1 then y1 = cy elseif cy > y2 then y2 = cy end
+                        
+                        for dy = -1, 1 do
+                            for dx = -1, 1 do
+                                if dx ~= 0 or dy ~= 0 then
+                                    local nx, ny = cx + dx, cy + dy
+                                    local ni = ny * w + nx
+                                    if nx >= 0 and nx < w and ny >= 0 and ny < h and not vis[ni] and not isTrans(nx, ny) then
+                                        vis[ni] = true
+                                        q[#q+1] = {nx, ny}
+                                    end
+                                end
+                            end
+                        end
+                    end
+                    
+                    local s = spr:newSlice(Rectangle(x1 + ox, y1 + oy, x2 - x1 + 1, y2 - y1 + 1))
+                    s.color, s.name, count = d.color, d.name .. "_" .. count, count+1
+                end
+                vis[i] = true
+            end
+        end
+    end)
+    app.refresh()
+    notify(string.format("Auto-slicer generated %d slices", count or 0))
+end
+
+local dlg = Dialog("Better Slicer")
+
+local function updateUI()
+    local mode = dlg.data.mode
+    local isSz, isCnt = (mode == M_SIZE), (mode == M_COUNT)
+    local isGrid = isSz or isCnt
+    
+    dlg:modify{id="size_header", text=isSz and "Slice Size" or "Slice Count", visible=isGrid}
+       :modify{id="cell_W", visible=isSz} :modify{id="cell_H", visible=isSz}
+       :modify{id="no_Col", visible=isCnt} :modify{id="no_Row", visible=isCnt}
+       :modify{id="padding_header", visible=isGrid} :modify{id="padding_X", visible=isGrid} :modify{id="padding_Y", visible=isGrid}
+       :modify{id="offset_header", visible=isGrid} :modify{id="offset_X", visible=isGrid} :modify{id="offset_Y", visible=isGrid}
+end
+
+dlg:combobox{ id="mode", label="Mode:", option=M_SIZE, options={M_AUTO, M_SIZE, M_COUNT}, onchange=updateUI }
+   :entry{id="name", label="Base Name:", text="Slice"}
+   :color{id="color", label="Color:", color=Color{r=0, g=0, b=250, a=150}}
+   :check{id="clear", text="Clear existing slices", selected=false}
+   :check{id="ignoreEmpty", text="Ignore empty cells", selected=false}
+   
+   :separator{id="size_header", text="Slice Size"}
+   :number{id="cell_W", label="W:", text="16"} :number{id="cell_H", label="H:", text="16"}
+   :number{id="no_Col", label="Col:", text="1"} :number{id="no_Row", label="Row:", text="1"}
+   
+   :separator{id="padding_header", text="Padding"}
+   :number{id="padding_X", label="X:", text="0"} :number{id="padding_Y", label="Y:", text="0"}
+   
+   :separator{id="offset_header", text="Offset"}
+   :number{id="offset_X", label="X:", text="0"} :number{id="offset_Y", label="Y:", text="0"}
+   
+   :separator{}
+   :button{id="slice", text="Slice", focus=true, onclick=function()
+        local d = dlg.data
+        if d.mode == M_SIZE then doGridSlice(d, false); dlg:close()
+        elseif d.mode == M_COUNT then doGridSlice(d, true); dlg:close()
+        elseif d.mode == M_AUTO then
+            local adlg = Dialog("Alert")
+            adlg:label{text="Auto-Slice determines boundaries by opaque regions."}
+            if d.clear then adlg:label{text="Warning: Pre-existing slices will be cleared."} end
+            adlg:button{text="Run", focus=true, onclick=function() doAutoSlice(d); adlg:close(); dlg:close() end}
+                :button{text="Cancel", onclick=function() adlg:close() end}
+                :show()
+            return
+        end
+        app.refresh()
+   end}
+   :button{text="Close", onclick=function() dlg:close() end}
+
+updateUI()
+dlg:show{wait=false}
